@@ -11,15 +11,9 @@
 #include <thread>
 #include <mutex>
 
+#include <constant.h>
+
 #define TOTAL_USER 4
-
-#define MSG_SIZE 200
-#define TYPE_SIZE 3
-#define ID_SIZE 1
-
-#define TYPE_INVITE "INV"
-
-#define SERV_PORT 20403
 
 using namespace std;
 
@@ -43,7 +37,7 @@ public:
     Group group = NULL;
     queue<Message> msg_queue;
 
-    User(char id);
+    User(string id);
     void send(Message &msg);
     void send();
     bool login(int soc);
@@ -58,7 +52,7 @@ public:
     string content;
 
     Message(string input);
-    void send();
+    void reply();
 };
 
 class Group {
@@ -76,6 +70,10 @@ int main(int argc, char** argv) {
     struct sockaddr_in serv_addr;
     struct sockaddr_in clnt_addr;
     int clnt_addr_size;
+ 
+    for (int i = 0; i < 5; i++) {
+        user_list.emplace_back('A'+i);
+    }
 
     serv_sock = socket(PF_INET, SOCK_STREAM, 0);
 
@@ -244,7 +242,7 @@ Message::Message(string input) {
     content = input.substr();
 }
 
-void Message::send() {
+void Message::reply() {
     // TODO: clarify protocol and call User::send() or Group::send()
     if (type == TYPE_INVITE) {}
 }
