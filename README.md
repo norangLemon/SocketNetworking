@@ -75,13 +75,95 @@
 
 ### Protocol
 
+모든 패킷은 다음과 같은 구조로 이루어져 있다.
+
+```
+Packet_Size(int)|Packet_Type(String)|Receiver/Sender(String)|Content(String)
+```
+
+패킷의 종류에 따라서 Sender, Receiver, Content는 없을 수도 있다.
+서버가 보내는 패킷에는 Sender만이, 유저가 보내는 패킷에는 Receiver만이 있다.
+유저가 보내는 패킷은 반드시 위 구조 순대로 내용이 포함되어 있으며,
+한 요소가 생략되면 잇다른 요소도 생략된다.
+자세한 패킷의 구조는 아래에서 자세히 확인할 수 있다.
+
+한편, 효율성을 위하여 Packet의 크기를 먼저 수신한 뒤 이어지는 내용을 받게 된다.
+Packet의 크기는 200을 넘지 않는다.
+이때 Packet_Size는 해당 값을 제외한 Packet의 전체 길이를 의미한다.
+
+Packet_Type은 3글자로 이루어져 있다.
+ID의 길이는 한 글자로만 이루어져 있다.
+따라서 Content를 제외하고는 문자의 위치에 따라서 어떤 내용인지 알 수 있다.
+
+#### User's Packet
+
+* Log in
+    * `Packet_Size|LIN`
+* Log Out
+    * `Packet_Size|OUT`
+* Read Queued Messages
+    * `Packet_Size|QUE`
+* Create New Conversation
+    * `Packet_Size|CRE|Receiver|Content`
+* Invite
+    * `Packet_Size|INV|Receiver`
+* Left/Join Group
+    * `Packet_Size|ACC`
+    * `Packet_Size|DEC`
+* Send Message
+    * `Packet_Size|MSG|Receiver|Content`
+
+#### Server's Packet
+
+* Login Failed
+    * `Packet_Size|FIN`
+* Login Successed
+    * `Packet_Size|SIN`
+* New Conversation Created
+    * `Packet_Size|CRE|Sender|Content`
+    * 다른 사람이 날 초대함
+* Invited
+    * `Packet_Size|INV|Sender`
+* Left/Join Group
+    * `Packet_Size|ACC|Sender`
+    * `Packet_Size|DEC|Sender`
+* New Message
+    * `Packet_Size|MSG|Sender|Content`
+
 
 ### Server Implementation
 
+#### Multi-threading
+
+C++11의 thread를 사용.
+
+#### Abstraction
+
+Group, User, Message 클래스 구성.
+
+read_int, read_string으로 추상화하여 read를 직접 다루지 않음.
+
+#### Logging
+
 ### Client Implementation
+
+#### Multi-threading
+
+C++11의 thread를 사용.
+
+#### Abstraction
+
+Message 클래스 구성.
+
+read_int, read_string으로 추상화하여 read를 직접 다루지 않음.
+
+
 
 ### How to run program
 
 ## 3. Results
 – Screenshots of your implementation result
+
 ## 4. Discussion
+
+
