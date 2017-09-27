@@ -1,6 +1,5 @@
 2017 Computer Network Assignment 1
 ---
-> [Assignment description](http://incpaper.snu.ac.kr/images/5/58/2017em_Socket_HW.pdf)
 
 ## 1. Problem statement
 
@@ -199,6 +198,7 @@ Group, User, Message의 클래스를 구성하여 스트링을 직접 다루는 
 
 ## 3. Results
 
+![img](img.png)
 
 ## 4. Discussion
 
