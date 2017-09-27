@@ -78,13 +78,11 @@
 모든 패킷은 다음과 같은 구조로 이루어져 있다.
 
 ```
-Packet_Size(int)|Packet_Type(String)|Receiver/Sender(String)|Content(String)
+Packet_Size(int)|Packet_Type(String)|User(String)|Content(String)
 ```
 
-패킷의 종류에 따라서 Sender, Receiver, Content는 없을 수도 있다.
-서버가 보내는 패킷에는 Sender만이, 유저가 보내는 패킷에는 Receiver만이 있다.
-유저가 보내는 패킷은 반드시 위 구조 순대로 내용이 포함되어 있으며,
-한 요소가 생략되면 잇다른 요소도 생략된다.
+패킷의 종류에 따라서 User, Content는 없을 수도 있다.
+User는 요청의 수행 대상이 되는 이용자이다.
 자세한 패킷의 구조는 아래에서 자세히 확인할 수 있다.
 
 한편, 효율성을 위하여 Packet의 크기를 먼저 수신한 뒤 이어지는 내용을 받게 된다.
@@ -93,77 +91,119 @@ Packet의 크기는 200을 넘지 않는다.
 
 Packet_Type은 3글자로 이루어져 있다.
 ID의 길이는 한 글자로만 이루어져 있다.
-따라서 Content를 제외하고는 문자의 위치에 따라서 어떤 내용인지 알 수 있다.
+따라서 Content를 제외하고는 패킷의 타입과 문자의 위치를 알면 어떤 내용인지 알 수 있다.
 
 #### User's Packet
 
 * Log in
-    * `Packet_Size|LIN`
+    * `Packet_Size|LIN|Content`
 * Log Out
     * `Packet_Size|OUT`
 * Read Queued Messages
     * `Packet_Size|QUE`
-* Create New Conversation
-    * `Packet_Size|CRE|Receiver|Content`
-* Invite
-    * `Packet_Size|INV|Receiver`
-* Left/Join Group
+* Accept/Decline Invitation
     * `Packet_Size|ACC`
     * `Packet_Size|DEC`
+* Left Group
+    * `Packet_Size|GOU`
+* Invite
+    * `Packet_Size|INV|User`
 * Send Message
-    * `Packet_Size|MSG|Receiver|Content`
+    * `Packet_Size|MSG|Content`
 
 #### Server's Packet
 
+* Login Successed
+    * `Packet_Size|SIN|Content`
+    * 로그인을 알린다. 또한 읽어야 하는 메시지의 수가 Content에 포함된다.
 * Login Failed
     * `Packet_Size|FIN`
-* Login Successed
-    * `Packet_Size|SIN`
-* New Conversation Created
-    * `Packet_Size|CRE|Sender|Content`
-    * 다른 사람이 날 초대함
+    * 로그인 실패를 알린다.
 * Invited
-    * `Packet_Size|INV|Sender`
+    * `Packet_Size|INV`
+    * 초대되었음을 알린다.
+* New Group
+    * `Packet_Size|NEW|Content`
+    * 새로 어떤 그룹에 들어가서 방의 정보를 받음. Content에 `User1, User2`와 같이 유저의 목록이 포함됨.
 * Left/Join Group
-    * `Packet_Size|ACC|Sender`
-    * `Packet_Size|DEC|Sender`
+    * `Packet_Size|GOU|User`
+    * `Packet_Size|GIN|User`
 * New Message
-    * `Packet_Size|MSG|Sender|Content`
+    * `Packet_Size|MSG|User|Content`
+    * User가 Content의 내용을 송신함
+* Conversation Created
+    * `Packet_Size|CRE|User|Content`
+    * 다른 사람이 날 초대하여, 메시지를 받게 됨.
+* Error
+    * `Packet_Size|ERR|Content`
+
+### Common Implementation
+
+read_int, read_string으로 추상화하여 read를 직접 다루지 않았다.
+마찬가지로 송신시에도 send_packet()으로 recv를 직접 다루지 않았다.
+
+C++11의 thread를 사용하여 구현하였다.
+
+#### Error Handling
+
+* 쌓인 메시지 있는 경우 다른 작업 수행 불가
+* 쌓인 메시지 읽고 난 후 다시 읽기 요청 불가
+* 중복 로그인 불가
+* 강제 종료시에도 로그아웃 처리됨
+* 그룹에 이미 속한 사람 초대 불가
+* 그룹에 속하지 않은 경우
+    * 메시지 송신 불가
+    * 초대 불가
+    * 그룹 떠나기 불가
+* 초대를 받지 않은 경우
+    * 초대 거절, 승인 불가
+* 그룹이 생성된 경우
+    * 다른 사람에게 메시지 보내기 불가
+* 메시지가 200자를 초과하는 경우 보낼 수 없음
 
 
 ### Server Implementation
 
-#### Multi-threading
-
-C++11의 thread를 사용.
-
 #### Abstraction
 
-Group, User, Message 클래스 구성.
+Group, User, Message의 클래스를 구성하여 스트링을 직접 다루는 것을 최소화하였다.
 
-read_int, read_string으로 추상화하여 read를 직접 다루지 않음.
-
-#### Logging
-
-### Client Implementation
-
-#### Multi-threading
-
-C++11의 thread를 사용.
-
-#### Abstraction
-
-Message 클래스 구성.
-
-read_int, read_string으로 추상화하여 read를 직접 다루지 않음.
+###
 
 
 
 ### How to run program
 
+#### Compilation & Execution
+
+1. `make`하여 프로그램을 컴파일한다.
+    - 서버 및 클라이언트를 따로 컴파일 하기 위해서는 `make server`, `make client`를 하면 된다.
+1. `./server`하여 서버를 실행한다.
+1. `./client`하여 클라이언트를 실행한다.
+
+#### How to use Client
+
+1. 로그인 화면이 나타나면 아이디를 입력한다.
+아이디는 `A`에서 `D`까지 네 개의 계정이 미리 만들어져 있다.
+1. 로그인에 성공하면 로그인 성공 메시지와 부재중 메시지의 수를 확인할 수 있다.
+1. 부재중 메시지가 있는 경우, `/read` 하여 부재중 메시지를 읽으면 다른 작업을 수행할 수 있다.
+부재중 메시지를 확인하지 않고 다른 작업을 수행하면 경고 메시지가 나타난다.
+부재줄 메시지가 0인 경우, 곧바로 다른 작업을 할 수 있다.
+1. 할 수 있는 작업은 다음과 같다.
+    - `/send`입력 후 순차적으로 [USER] [MSG] 입력
+    - `/invite` 입력 후 [USER] 입력
+    - `/decline`, `/accept`
+    - `/left group`
+    - `/logout`
+    - 메시지 보내기
+
 ## 3. Results
-– Screenshots of your implementation result
+
 
 ## 4. Discussion
 
+### 셀렉트 쓰기
+유저가 늘어나는 경우 셀렉트로 효율을 늘릴 수 있다.
 
+### 가상함수
+가상함수를 사용하여 메시지를 구조화하고, 코드를 간결하게 바꿀 수 있다.

@@ -32,14 +32,23 @@
 #define TYPE_JOIN_GROUP         string("GIN")
 #define TYPE_ERR                string("ERR")
 
-#define ERR_ID_LEN              string("ID's length is ")+to_string(ID_SIZE)
-#define ERR_MSG_LEN             string("Message's cropped over ")+to_string(MSG_SIZE)
-#define ERR_INV                 string("Cannot Invite")
-#define ERR_MSG                 string("Don't have group")
-#define ERR_LEFT_GROUP          string("Cannot Leave Group")
+#define NOTI_LOGIN              string("Login Success!")
+#define NOTI_UNREAD             string("Unread Messages: ")
+#define NOTI_NEW_GROUP          string("New Group | Memeber: ")
+#define NOTI_INVITE             string("You Invited")
+#define NOTI_JOIN               string(" Join")
+#define NOTI_LEFT               string(" Left")
+#define NOTI_ERR                string("[SYSTEM ERR] ")
+
+#define ERR_ID_LEN              string("Length of ID is ")+to_string(ID_SIZE)
+#define ERR_MSG_LEN             string("Cannot Send Message: Length over ")+to_string(MSG_SIZE)
+#define ERR_INV                 string("Cannot Invite: You have no group or Target is already member")
+#define ERR_NOT_INV             string("You Are Not Invited")
+#define ERR_MSG                 string("Cannot Chat: You have no group")
+#define ERR_LEFT_GROUP          string("Cannot Leave Group: You have no group")
 #define ERR_JOIN_GROUP          string("Cannot Join Group")
-#define ERR_CREATE_GROUP        string("Cannot Create Group")
-#define ERR_LOGIN               string("Cannot Login")
+#define ERR_CREATE_GROUP        string("Cannot Create Group: There is already group")
+#define ERR_LOGIN               string("Cannot Login: You already logged in or Not proper ID")
 #define ERR_TYPE                string("Unknown Message Type")
 #define ERR_NOT_USER            string("Login First")
 #define ERR_UNKNOWN             string("Unknown Error")
@@ -58,6 +67,7 @@
 #define CMDTYPE_CMD                     3
 #define CMDTYPE_INVITE                  4
 #define CMDTYPE_CREATE_GROUP            5
+#define CMDTYPE_READ_ALL                6
 
 #define SERV_PORT 20403
 #define SERV_IP "127.0.0.1"
@@ -82,10 +92,8 @@ ssize_t read_string(int sock, string &str, int length) {
     char *buffer = new char[length];
     int index = 0, received = 0;
     while (received = recv(sock, buffer+index, 1, 0) != 0) {
-        cout << "now reading string[" << index << "]\n";
         index += received;
         if (index == length) {
-            cout << str << endl;
             str = buffer;
             break;
         }

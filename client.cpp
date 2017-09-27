@@ -2,7 +2,7 @@
 
 #include "common.h"
 
-bool login(int sock);
+bool login(int sock, int& unread);
 int send_message(int sock);
 int recv_message(int sock);
 int cmd_type(string s);
@@ -14,7 +14,6 @@ ssize_t send_packet(int sock, string s);
 
 string id;
 string message;
-
 
 int main(int argc, char** argv) {
     int sock;
@@ -32,8 +31,32 @@ int main(int argc, char** argv) {
     if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) == -1)
         error_handling("connect() error");
     bool is_login = false;
+
+    int unread = 0, str_len;
     while(!is_login)
-        is_login = login(sock);
+        is_login = login(sock, unread);
+
+    // read all queued msg first
+    while (unread) {
+        string cmd;
+        getline(cin, cmd);
+        if (cmd != CMD_READ_ALL)
+            cout << "[ERROR]: 부재중 메시지를 먼저 읽으세요." << endl;
+        else {
+            send_packet(sock, parse_send(cmd));
+            break;
+        }
+    }
+
+    int i = 1;
+    while (unread >= i && read_int(sock, str_len) != 0) {
+        string raw_msg;
+        if (read_string(sock, raw_msg, str_len) == str_len)
+            cout << "[" << i++ << "] "<< parse_recv(raw_msg) << endl;
+    }
+
+    cout << "-- End of Unread Message --" << endl;
+
     thread snd_thread(send_message, sock);
     thread rcv_thread(recv_message, sock);
 
@@ -45,15 +68,9 @@ int main(int argc, char** argv) {
 }
 
 int send_message(int sock) {
-    string cmd;
-
     while (1) {
-        // TODO
-        // 3-1. read queued msg
-        // 4. inv, cre, msg
-        // 5. react inv
+        string cmd;
 
-        cout << "< " << id << " >: ";
         getline(cin, cmd);
         int type = cmd_type(cmd);
         string id, msg;
@@ -63,6 +80,9 @@ int send_message(int sock) {
                 break;
             case (CMDTYPE_ERR):
                 cout << "[ERROR]: 명령어가 아닌 경우 '/'문자로 시작하는 메시지를 쓸 수 없습니다." << endl;
+                break;
+            case (CMDTYPE_READ_ALL):
+                cout << "[ERROR]: 이미 모든 메시지를 읽었습니다." << endl;
                 break;
             case (CMDTYPE_MSG):
                 send_packet(sock, TYPE_MSG+cmd);
@@ -83,20 +103,18 @@ int send_message(int sock) {
 }
 
 int recv_message(int sock) {
-        // TODO
-        // 4. prettify
-    int str_len = 0;
-
+    int str_len;
     while (read_int(sock, str_len) != 0) {
         string raw_msg;
         if (read_string(sock, raw_msg, str_len) == str_len) {
-            cout << parse_recv(raw_msg) << endl;
+            string out = parse_recv(raw_msg);
+            cout << out << endl;
         }
     }
-    error_handling("recv_message() - server disconnected");
+    error_handling("server disconnected");
 }
 
-bool login(int sock) {
+bool login(int sock, int &unread) {
     int len = TYPE_SIZE+ID_SIZE;
     cout << "Input ID: ";
     getline(cin, id);
@@ -105,20 +123,24 @@ bool login(int sock) {
 
     int str_len;
     string raw_msg;
+    bool ret = false;
     read_int(sock, str_len);
-    if (read_string(sock, raw_msg, str_len) == str_len)
+    if (read_string(sock, raw_msg, str_len) == str_len) {
         cout << parse_recv(raw_msg) << endl;
+        ret = raw_msg.substr(0, TYPE_SIZE) == TYPE_LOGIN_SUCC;
+    }
     else
-        error_handling(ERR_UNKNOWN);
-    return raw_msg.substr(0, TYPE_SIZE) == TYPE_LOGIN_SUCC;
+        error_handling(ERR_UNKNOWN + raw_msg);
+
+    if (ret) unread = atoi(raw_msg.substr(TYPE_SIZE, raw_msg.size()).c_str());
+    return ret;
 }
 
 int cmd_type(string s) {
     if (s.empty())
         return CMDTYPE_EMPTY;
     if (s[0] == '/') {
-        if (s == CMD_READ_ALL
-            || s == CMD_LOGOUT
+        if (s == CMD_LOGOUT
             || s == CMD_LEFT_GROUP
             || s == CMD_ACCEPT_INVITE
             || s == CMD_DECLINE_INVITE)
@@ -127,6 +149,8 @@ int cmd_type(string s) {
             return CMDTYPE_INVITE;
         else if (s == CMD_CREATE_GROUP)
             return CMDTYPE_CREATE_GROUP;
+        else if (s == CMD_READ_ALL)
+            return CMDTYPE_READ_ALL;
         else
             return CMDTYPE_ERR;
     } else
@@ -134,7 +158,28 @@ int cmd_type(string s) {
 }
 
 string parse_recv(string s) {
-    return s;
+    string type = s.substr(0, TYPE_SIZE);
+    string ret;
+    if (type == TYPE_LOGIN_FAIL) {
+        ret = ERR_LOGIN;
+    } else if (type == TYPE_LOGIN_SUCC) {
+        ret = NOTI_LOGIN+"\n"+NOTI_UNREAD+s[TYPE_SIZE];
+    } else if (type == TYPE_NEW_GROUP) {
+        ret = NOTI_NEW_GROUP + s.substr(TYPE_SIZE, s.size());
+    } else if (type == TYPE_INVITE) {
+        ret = NOTI_INVITE;
+    } else if (type == TYPE_JOIN_GROUP) {
+        ret = s.substr(TYPE_SIZE, ID_SIZE)+NOTI_JOIN;
+    } else if (type == TYPE_LEFT_GROUP) {
+        ret = s.substr(TYPE_SIZE, ID_SIZE)+NOTI_LEFT;
+    } else if (type == TYPE_MSG) {
+        ret = "< " + s.substr(TYPE_SIZE, ID_SIZE) + " > " + s.substr(TYPE_SIZE+ID_SIZE, s.size());
+    } else if (type == TYPE_CREATE_GROUP) {
+        ret = "< " + s.substr(TYPE_SIZE, ID_SIZE) + " > " + s.substr(TYPE_SIZE+ID_SIZE, s.size());
+    } else {
+        return NOTI_ERR + s.substr(TYPE_SIZE, s.size());
+    }
+    return ret;
 }
 
 string parse_send(string s) {
@@ -173,6 +218,7 @@ void get_create_var(string &id, string &msg) {
     if (msg.size() > MSG_SIZE)
         cout << ERR_MSG_LEN << endl;
 }
+
 ssize_t send_packet(int sock, string s) {
     if (s.size() > MSG_SIZE)
         return -1;

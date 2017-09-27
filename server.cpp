@@ -12,12 +12,16 @@ public:
     bool is_online = false;
     int socket = 0;
     queue<string> msg_queue;
+    bool is_invited = false;
 
     User(string id);
     void send(string msg);
     void send_all();
     bool login(int soc);
     bool logout();
+    void answer_invite();
+    void invite_error();
+    void invited();
 };
 
 class Message {
@@ -66,6 +70,7 @@ int main(int argc, char** argv) {
         mtx_user.emplace(id, make_unique<mutex>());
     }
 
+    cout << "Server Started!" << endl;
     serv_sock = socket(PF_INET, SOCK_STREAM, 0);
 
     memset(&serv_addr, 0, sizeof(serv_addr));
@@ -112,12 +117,18 @@ int clnt_connection(int clnt_sock) {
         string raw_msg;
         if (read_string(clnt_sock, raw_msg, str_len) == str_len) {
             Message m = Message(raw_msg);
+            logging(m.type);
             // execute the request and handling exception
             if (user == NULL && m.type == TYPE_LOGIN) {
                 user = get_user(m.content);
-                if (user)
-                    m.reply(user->login(clnt_sock), *user);
-                else {
+                if (user) {
+                    bool suc = user->login(clnt_sock);
+                    if (!suc) {
+                        send_packet(clnt_sock, TYPE_ERR + ERR_LOGIN);
+                        user = NULL;
+                    }
+                    m.reply(suc, *user);
+                } else {
                     string response = TYPE_LOGIN_FAIL;
                     send_packet(clnt_sock, response);
                 }
@@ -137,15 +148,27 @@ int clnt_connection(int clnt_sock) {
                 else
                     m.reply(false, *user);
             } else if (m.type == TYPE_INVITE) {
+                if (!group.has(*user))
+                    m.reply(false, *user);
                 User *receiver = get_user(m.user);
-                if (receiver)
-                    m.reply(true, *user, *receiver);
-                else
+                if (receiver && !group.has(*receiver)) {
+                    receiver->invited();
+                    m.reply(true, *receiver);
+                } else
                     m.reply(false, *user);
             } else if (m.type == TYPE_LEFT_GROUP) {
                 m.reply(group.left(*user), *user);
-            } else if (m.type == TYPE_JOIN_GROUP) {
-                m.reply(group.join(*user), *user);
+            } else if (m.type == TYPE_ACCEPT_INVITE) {
+                if (user->is_invited) {
+                    m.reply(group.join(*user), *user);
+                    user->answer_invite();
+                } else
+                    user->invite_error();
+            } else if (m.type == TYPE_DECLINE_INVITE) {
+                if (user->is_invited)
+                    user->answer_invite();
+                else
+                    user->invite_error();
             } else if (m.type == TYPE_MSG) {
                 m.reply(group.has(*user), *user);
             } else {
@@ -157,7 +180,7 @@ int clnt_connection(int clnt_sock) {
             break;
         }
     }
-
+    if (user) user->logout();
     close(clnt_sock);
     return 0;
 }
@@ -202,7 +225,6 @@ bool User::login(int soc) {
         socket = soc;
         return true;
     } else {
-        logging("User::login() - it is already logged in");
         return false;
     }
 }
@@ -217,6 +239,20 @@ bool User::logout() {
         logging("User::logout() - it is already logged out");
         return false;
     }
+}
+
+void User::answer_invite() {
+    lock_guard<mutex> loc(*mtx_user[ID]);
+    is_invited = false;
+}
+
+void User::invite_error() {
+    send(ERR_NOT_INV);
+}
+
+void User::invited() {
+    lock_guard<mutex> loc(*mtx_user[ID]);
+    is_invited = true;
 }
 
 Message::Message(string input) {
@@ -262,13 +298,10 @@ void Message::reply(bool success, User &u) {
         }
     } else if (type == TYPE_INVITE) {
         if (success) {
-            response = TYPE_NEW_GROUP + group.user_list();
+            response = TYPE_INVITE;
             u.send(response);
-
-            response = TYPE_INVITE+user;
-            group.send(response, u);
         } else {
-            response = ERR_INV;
+            response = TYPE_ERR + ERR_INV;
             u.send(response);
         }
     } else if (type == TYPE_LEFT_GROUP) {
@@ -293,7 +326,7 @@ void Message::reply(bool success, User &u) {
         }
     } else if (type == TYPE_MSG) {
         if (success) {
-            response = TYPE_MSG + content;
+            response = TYPE_MSG + u.ID + content;
             group.send(response, u);
         } else {
             response = TYPE_ERR + ERR_MSG;
