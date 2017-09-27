@@ -107,7 +107,7 @@ User* get_user(string id) {
 int clnt_connection(int clnt_sock) {
     int str_len = 0;
     User *user = NULL;
-    
+
     while (read_int(clnt_sock, str_len) != 0) {
         string raw_msg;
         if (read_string(clnt_sock, raw_msg, str_len) == str_len) {
@@ -126,6 +126,8 @@ int clnt_connection(int clnt_sock) {
                 send_packet(clnt_sock, response);
             } else if (m.type == TYPE_LOGOUT) {
                 m.reply(user->logout(), *user);
+                close(clnt_sock);
+                return 0;
             } else if (m.type == TYPE_READ_QUEUED_MSG) {
                 user->send_all();
             } else if (m.type == TYPE_CREATE_GROUP) {
@@ -154,7 +156,6 @@ int clnt_connection(int clnt_sock) {
             error_handling(clnt_sock, "read_string() - too short message");
             break;
         }
-        cout << "----" << endl;
     }
 
     close(clnt_sock);
@@ -220,6 +221,7 @@ bool User::logout() {
 
 Message::Message(string input) {
     type = input.substr(0, TYPE_SIZE);
+    cout << "Message(): type is " << type << endl;
     if (type == TYPE_LOGIN) {
         content = input.substr(TYPE_SIZE, ID_SIZE);
     } else if (type == TYPE_CREATE_GROUP) {
@@ -229,8 +231,6 @@ Message::Message(string input) {
         user = input.substr(TYPE_SIZE, ID_SIZE);
     } else if (type == TYPE_MSG) {
         content = input.substr(TYPE_SIZE, input.size());
-    } else {
-        error_handling("Message() - wrong type");
     }
 }
 
@@ -257,7 +257,7 @@ void Message::reply(bool success, User &u) {
     int len;
     if (type == TYPE_LOGIN) {
         if (success) {
-            response = TYPE_LOGIN_SUCC;
+            response = TYPE_LOGIN_SUCC + to_string(u.msg_queue.size());
             u.send(response);
         }
     } else if (type == TYPE_INVITE) {
@@ -317,8 +317,10 @@ string Group::user_list() {
     lock_guard<mutex> lock(mtx_group);
     string ret;
     for (auto i : group.member)
-        ret += i.ID;
-    return ret;
+        ret += i.ID + ",";
+    if (ret.empty()) return "[]";
+    ret.pop_back();
+    return "[" + ret + "]";
 }
 
 bool Group::create(User &s, User &r) {

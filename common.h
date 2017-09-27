@@ -12,6 +12,11 @@
 #include <sys/types.h>
 #include <arpa/inet.h>
 
+#define MSG_SIZE 200
+#define TYPE_SIZE 3
+#define ID_SIZE 1
+#define LEN_SIZE 3
+
 #define TYPE_MSG                string("MSG")
 #define TYPE_LOGIN              string("LIN")
 #define TYPE_LOGOUT             string("OUT")
@@ -27,6 +32,8 @@
 #define TYPE_JOIN_GROUP         string("GIN")
 #define TYPE_ERR                string("ERR")
 
+#define ERR_ID_LEN              string("ID's length is ")+to_string(ID_SIZE)
+#define ERR_MSG_LEN             string("Message's cropped over ")+to_string(MSG_SIZE)
 #define ERR_INV                 string("Cannot Invite")
 #define ERR_MSG                 string("Don't have group")
 #define ERR_LEFT_GROUP          string("Cannot Leave Group")
@@ -42,27 +49,15 @@
 #define CMD_ACCEPT_INVITE       string("/accept")
 #define CMD_DECLINE_INVITE      string("/decline")
 #define CMD_LOGOUT              string("/logout")
-
 #define CMD_INVITE              string("/invite")
 #define CMD_CREATE_GROUP        string("/send")
 
-#define CMDTYPE_EMPTY                   -1
-#define CMDTYPE_ERR                     0
-#define CMDTYPE_MSG                     1
-#define CMDTYPE_CMD                     2
-
-#define CMDTYPE_CMD_READ_ALL            3
-#define CMDTYPE_CMD_LOGOUT              4
-#define CMDTYPE_CMD_INVITE              5
-#define CMDTYPE_CMD_LEFT_GROUP          6
-#define CMDTYPE_CMD_ACCEPT_INVITE       7
-#define CMDTYPE_CMD_DECLINE_INVITE      8
-#define CMDTYPE_CMD_CREATE_GROUP        9
-
-#define MSG_SIZE 200
-#define TYPE_SIZE 3
-#define ID_SIZE 1
-#define LEN_SIZE 3
+#define CMDTYPE_EMPTY                   0
+#define CMDTYPE_ERR                     1
+#define CMDTYPE_MSG                     2
+#define CMDTYPE_CMD                     3
+#define CMDTYPE_INVITE                  4
+#define CMDTYPE_CREATE_GROUP            5
 
 #define SERV_PORT 20403
 #define SERV_IP "127.0.0.1"
@@ -86,9 +81,11 @@ int logging(string msg) {
 ssize_t read_string(int sock, string &str, int length) {
     char *buffer = new char[length];
     int index = 0, received = 0;
-    while (received = recv(sock, buffer + index, 1, 0) != 0) {
+    while (received = recv(sock, buffer+index, 1, 0) != 0) {
+        cout << "now reading string[" << index << "]\n";
         index += received;
         if (index == length) {
+            cout << str << endl;
             str = buffer;
             break;
         }
