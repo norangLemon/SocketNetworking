@@ -1,5 +1,16 @@
 #include <iostream>
 #include <string>
+#include <thread>
+#include <mutex>
+#include <memory>
+#include <map>
+
+#include <unistd.h>
+#include <cstring>
+
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
 
 #define TYPE_MSG                string("MSG")
 #define TYPE_LOGIN              string("LIN")
@@ -24,35 +35,58 @@
 #define ERR_LOGIN               string("Cannot Login")
 #define ERR_TYPE                string("Unknown Message Type")
 #define ERR_NOT_USER            string("Login First")
+#define ERR_UNKNOWN             string("Unknown Error")
+
+#define CMD_READ_ALL            string("/read")
+#define CMD_LEFT_GROUP          string("/left")
+#define CMD_ACCEPT_INVITE       string("/accept")
+#define CMD_DECLINE_INVITE      string("/decline")
+#define CMD_LOGOUT              string("/logout")
+
+#define CMD_INVITE              string("/invite")
+#define CMD_CREATE_GROUP        string("/send")
+
+#define CMDTYPE_EMPTY                   -1
+#define CMDTYPE_ERR                     0
+#define CMDTYPE_MSG                     1
+#define CMDTYPE_CMD                     2
+
+#define CMDTYPE_CMD_READ_ALL            3
+#define CMDTYPE_CMD_LOGOUT              4
+#define CMDTYPE_CMD_INVITE              5
+#define CMDTYPE_CMD_LEFT_GROUP          6
+#define CMDTYPE_CMD_ACCEPT_INVITE       7
+#define CMDTYPE_CMD_DECLINE_INVITE      8
+#define CMDTYPE_CMD_CREATE_GROUP        9
 
 #define MSG_SIZE 200
 #define TYPE_SIZE 3
 #define ID_SIZE 1
+#define LEN_SIZE 3
 
 #define SERV_PORT 20403
 #define SERV_IP "127.0.0.1"
 
 using namespace std;
 
-void packetize(char* buffer, string input) {
-    // given buffer which size is input.size(),
-    // copy the string and put the size in the head of buffer
-    // to make it packetized.
-    int len = input.size();
-    *((int*)buffer) = len;
-    for (int i = 0; i < len; i++)
-        buffer[i+4] = input[i];
+int error_handling(string msg) {
+    cerr << "[ERROR] " << msg << endl;
+    exit(1);
 }
 
-int error_handling(string msg) {
-    cerr << msg << endl;
-    exit(1);
+int error_handling(int sock, string msg) {
+    cerr << "[ERROR] " << msg << endl;
+    // send some error packet
+}
+
+int logging(string msg) {
+    cout << "[LOG] " << msg << endl;
 }
 
 ssize_t read_string(int sock, string &str, int length) {
     char *buffer = new char[length];
     int index = 0, received = 0;
-    while (received = recv(sock, buffer + index, length, 0) != 0) {
+    while (received = recv(sock, buffer + index, 1, 0) != 0) {
         index += received;
         if (index == length) {
             str = buffer;
@@ -64,15 +98,34 @@ ssize_t read_string(int sock, string &str, int length) {
 }
 
 ssize_t read_int(int sock, int &num) {
-    char *buffer = new char[4];
-    int index = 0, received = 0;
-    while (received = recv(sock, buffer + index, 4, 0) != 0) {
-        index += received;
-        if (index == 4) {
-            num = *((int*)buffer);
+    int received = 0, i = 0;
+    char* buffer = new char[LEN_SIZE];
+    while (i = recv(sock, buffer+received, 1, 0) != 0) {
+        received += i;
+        if (received == LEN_SIZE) {
+            num = atoi(buffer);
             break;
         }
     }
     delete buffer;
-    return index;
+    return received;
+}
+
+ssize_t send_int(int sock, int num) {
+    char buffer[LEN_SIZE] = {'0', '0', '0'};
+    string s = to_string(num);
+    for (int i = 1; i <= s.size(); i++) {
+        buffer[LEN_SIZE-i] = s[s.size()-i];
+    }
+    send(sock, buffer, LEN_SIZE, 0);
+    return LEN_SIZE;
+}
+
+ssize_t send_string(int sock, string str, int len) {
+    char *buffer = new char[len];
+    strncpy(buffer, str.c_str(), len);
+    int ret;
+    ret = send(sock, buffer, len, 0);
+    delete buffer;
+    return ret;
 }

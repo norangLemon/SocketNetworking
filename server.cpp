@@ -1,15 +1,6 @@
 #include <vector>
 #include <queue>
-#include <map>
 #include <algorithm>
-#include <cstring>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <thread>
-#include <mutex>
-#include <memory>
 
 #include "common.h"
 
@@ -20,10 +11,10 @@ public:
     string ID;
     bool is_online = false;
     int socket = 0;
-    queue<pair<char*, int>> msg_queue;
+    queue<string> msg_queue;
 
     User(string id);
-    void send(char* msg, int len);
+    void send(string msg);
     void send_all();
     bool login(int soc);
     bool logout();
@@ -49,15 +40,16 @@ public:
     bool create(User &s, User &r);
     bool join(User &u);
     bool left(User &u);
-    void send(char* msg, int len, User &u);
+    void send(string msg, User &u);
 };
 
 User* get_user(string id);
 int clnt_connection(int clnt_sock);
-
+ssize_t send_packet(int sock, string s);
 
 mutex mtx_group;
 map<string, unique_ptr<mutex>> mtx_user;
+map<int, unique_ptr<mutex>> mtx_send;
 vector<User> user_db;
 Group group;
 
@@ -91,9 +83,12 @@ int main(int argc, char** argv) {
         clnt_addr_size = sizeof(struct sockaddr_in);
         clnt_sock = accept(serv_sock, (struct sockaddr*)&clnt_addr, (socklen_t *) &clnt_addr_size);
 
+        // make mutex(for send msg) per socket to avoid packet to be mixed
+        mtx_send.emplace(clnt_sock, make_unique<mutex>());
+
         thread t(clnt_connection, clnt_sock);
-        cout << "connected: " << clnt_sock << endl;
         t.detach();
+        cout << "connected: " << clnt_sock << endl;
     }
 
     return 0;
@@ -105,20 +100,18 @@ User* get_user(string id) {
             return &user_db[i];
         }
     }
-    error_handling("get_user() - user not exist");
+    logging("get_user() - user not exist");
     return NULL;
 }
 
 int clnt_connection(int clnt_sock) {
     int str_len = 0;
-    char* buffer;
     User *user = NULL;
-
+    
     while (read_int(clnt_sock, str_len) != 0) {
         string raw_msg;
         if (read_string(clnt_sock, raw_msg, str_len) == str_len) {
             Message m = Message(raw_msg);
-
             // execute the request and handling exception
             if (user == NULL && m.type == TYPE_LOGIN) {
                 user = get_user(m.content);
@@ -126,17 +119,11 @@ int clnt_connection(int clnt_sock) {
                     m.reply(user->login(clnt_sock), *user);
                 else {
                     string response = TYPE_LOGIN_FAIL;
-                    buffer = new char[response.size() + 4];
-                    packetize(buffer, response);
-                    send(clnt_sock, (void*)buffer, (response.size() + 4), 0);
-                    delete buffer;
+                    send_packet(clnt_sock, response);
                 }
             } else if (user == NULL) {
                 string response = ERR_NOT_USER;
-                buffer = new char[response.size() + 4];
-                packetize(buffer, response);
-                send(clnt_sock, (void*)buffer, (response.size() + 4), 0);
-                delete buffer;
+                send_packet(clnt_sock, response);
             } else if (m.type == TYPE_LOGOUT) {
                 m.reply(user->logout(), *user);
             } else if (m.type == TYPE_READ_QUEUED_MSG) {
@@ -160,34 +147,38 @@ int clnt_connection(int clnt_sock) {
             } else if (m.type == TYPE_MSG) {
                 m.reply(group.has(*user), *user);
             } else {
-                error_handling("clnt_connection() - unknown type error");
-                m.reply(false, *user);
-                continue;
+                error_handling(clnt_sock, "clnt_connection() - unknown type error");
+                break;
             }
-
         } else {
-            error_handling("read_string() - too short message");
+            error_handling(clnt_sock, "read_string() - too short message");
             break;
         }
+        cout << "----" << endl;
     }
 
     close(clnt_sock);
     return 0;
 }
 
+ssize_t send_packet(int sock, string s) {
+    lock_guard<mutex> loc(*mtx_send[sock]);
+    if (s.size() > MSG_SIZE)
+        return -1;
+    int ret = send_int(sock, s.size()) + send_string(sock, s, s.size());
+    return ret;
+}
+
 User::User(string id) {
     ID = id;
 }
 
-void User::send(char* msg, int len) {
+void User::send(string msg) {
     if (is_online) {
-        ::send(socket, (void*)msg, len, 0);
+        send_packet(socket, msg);
     } else {
         lock_guard<mutex> loc(*mtx_user[ID]);
-        char* buffer = new char[len];
-        strncpy(buffer, msg, len);
-
-        msg_queue.emplace(buffer, len);
+        msg_queue.emplace(msg);
     }
 }
 
@@ -195,13 +186,11 @@ void User::send_all() {
     if (is_online) {
         lock_guard<mutex> loc(*mtx_user[ID]);
         while (!msg_queue.empty()) {
-            char* tosend = msg_queue.front().first;
-            ::send(socket, (void*)tosend, msg_queue.front().second, 0);
-            delete tosend;
+            send_packet(socket, msg_queue.front());
             msg_queue.pop();
         }
     } else {
-        error_handling("User::send_all() - it is not online");
+        logging("User::send_all() - it is not online");
     }
 }
 
@@ -212,7 +201,7 @@ bool User::login(int soc) {
         socket = soc;
         return true;
     } else {
-        error_handling("User::login() - it is already logged in");
+        logging("User::login() - it is already logged in");
         return false;
     }
 }
@@ -224,7 +213,7 @@ bool User::logout() {
         socket = -1;
         return true;
     } else {
-        error_handling("User::logout() - it is already logged out");
+        logging("User::logout() - it is already logged out");
         return false;
     }
 }
@@ -246,134 +235,73 @@ Message::Message(string input) {
 }
 
 void Message::reply(bool success, User &u, User &u2) {
-    char* buffer;
     string response;
     int len;
     if (type == TYPE_CREATE_GROUP) {
         if (success) {
             response = TYPE_NEW_GROUP + group.user_list();
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            u2.send(buffer, len);
-            delete buffer;
+            u.send(response);
+            u2.send(response);
 
             response = TYPE_CREATE_GROUP + u.ID + content;
-            len = response.size() + 4;
-            buffer = new char[len];
-            u2.send(buffer, len);
-            delete buffer;
+            u2.send(response);
         } else {
             response = TYPE_ERR + ERR_CREATE_GROUP;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
         }
     }
 }
 
 void Message::reply(bool success, User &u) {
-    char* buffer;
     string response;
     int len;
     if (type == TYPE_LOGIN) {
         if (success) {
             response = TYPE_LOGIN_SUCC;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
         }
     } else if (type == TYPE_INVITE) {
         if (success) {
             response = TYPE_NEW_GROUP + group.user_list();
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
 
             response = TYPE_INVITE+user;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            group.send(buffer, len, u);
-            delete buffer;
+            group.send(response, u);
         } else {
             response = ERR_INV;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
         }
     } else if (type == TYPE_LEFT_GROUP) {
         if (success) {
             response = TYPE_LEFT_GROUP + u.ID;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            group.send(buffer, len, u);
-            delete buffer;
+            u.send(response);
+            group.send(response, u);
         } else {
             response = TYPE_ERR + ERR_LEFT_GROUP;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
         }
     } else if (type == TYPE_JOIN_GROUP) {
         if (success) {
             response = TYPE_NEW_GROUP + group.user_list();
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
 
             response = TYPE_JOIN_GROUP + u.ID;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            group.send(buffer, len, u);
-            delete buffer;
+            group.send(response, u);
         } else {
             response = TYPE_ERR + ERR_JOIN_GROUP;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
         }
     } else if (type == TYPE_MSG) {
         if (success) {
             response = TYPE_MSG + content;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            group.send(buffer, len, u);
-            delete buffer;
+            group.send(response, u);
         } else {
             response = TYPE_ERR + ERR_MSG;
-            len = response.size() + 4;
-            buffer = new char[len];
-            packetize(buffer, response);
-            u.send(buffer, len);
-            delete buffer;
+            u.send(response);
         }
     } else {
         response = TYPE_ERR + ERR_TYPE;
-        len = response.size() + 4;
-        buffer = new char[len];
-        packetize(buffer, response);
-        u.send(buffer, len);
-        delete buffer;
+        u.send(response);
     }
 }
 
@@ -408,7 +336,7 @@ bool Group::join(User &u) {
     lock_guard<mutex> lock(mtx_group);
     for (int i = 0; i < group.member.size(); i++) {
         if (group.member[i].ID == u.ID) {
-            error_handling("Group::join() - user already exists");
+            logging("Group::join() - user already exists");
             return false;
         }
     }
@@ -424,15 +352,15 @@ bool Group::left(User &u) {
             return true;
         }
     }
-    error_handling("Group::join() - user doesn't exist");
+    logging("Group::join() - user doesn't exist");
     return false;
 }
 
-void Group::send(char* msg, int len, User &user) {
+void Group::send(string msg, User &user) {
     lock_guard<mutex> lock(mtx_group);
     for (int i = 0; i < group.member.size(); i++) {
         if (group.member[i].ID != user.ID) {
-            group.member[i].send(msg, len);
+            group.member[i].send(msg);
         }
     }
 }
